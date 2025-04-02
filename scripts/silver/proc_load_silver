@@ -1,0 +1,148 @@
+/*
+===============================================================================
+Stored Procedure: Load silver Layer (Source -> silver)
+===============================================================================
+Script Purpose:
+    This stored procedure performs the ETL (Extract, Transform, Load) process to populate the 'silver' schema tables from the 'bronze' schema. It performs the following actions:
+    - Truncates the silver table before loading data
+    - Uses the load data command to load data from bronze to the silver table
+
+Parameters:
+    - None. Does not accept any values or returns any value
+
+Usage Example:
+    - call `datawarehouse-454113.silver.load_silver`();
+===============================================================================
+*/
+
+create or replace procedure `datawarehouse-454113.silver.load_silver` ()
+begin
+
+truncate table datawarehouse-454113.silver.crm_cust_info;
+insert into datawarehouse-454113.silver.crm_cust_info
+(
+  select
+  cst_id
+  , cst_key
+  , trim(cst_firstname) as cst_firstname
+  , trim(cst_lastname) as cst_lastname
+  , case when upper(trim(cst_gndr)) = 'F' then 'Female'
+        when upper(trim(cst_gndr)) = 'M' then 'Male'
+        else 'N/A'
+    end as cst_gndr
+  , case when upper(trim(cst_marital_status)) = 'S' then 'Single'
+        when upper(trim(cst_marital_status)) = 'M' then 'Married'
+        else 'N/A'
+    end as cst_marital_status
+  , cst_create_date
+  , current_timestamp()
+from 
+(
+  select 
+  *
+    ,row_number() over (partition by cst_id order by cst_create_date desc) as flag_last
+  from datawarehouse-454113.bronze.crm_cust_info
+) x1
+where flag_last = 1 and cst_id is not null
+);
+
+truncate table datawarehouse-454113.silver.crm_prd_info;
+insert into datawarehouse-454113.silver.crm_prd_info
+(
+  select
+  prd_id 
+  , replace(substring(prd_key, 1, 5), '-', '_') as cat_id
+  , substring(prd_key, 7, length(prd_key)) as prd_key
+  , prd_nm 
+  , ifnull(prd_cost, 0) as prd_cost
+  , case when upper(trim(prd_line)) = 'M' then 'Mountain'
+         when upper(trim(prd_line)) = 'R' then 'Road'
+         when upper(trim(prd_line)) = 'S' then 'Other Sales'
+         when upper(trim(prd_line)) = 'T' then 'Touring'
+         else 'N/A'
+    end as prd_line
+  , cast (prd_start_dt as date) as prd_start_dt
+  , cast (lead(prd_start_dt) over (partition by prd_key order by prd_start_dt) - 1 as date) as prd_end_dt
+  , current_timestamp()
+from
+  datawarehouse-454113.bronze.crm_prd_info
+);
+
+truncate table datawarehouse-454113.silver.crm_sales_details;
+insert into datawarehouse-454113.silver.crm_sales_details 
+(
+  select 
+  sls_ord_num
+  , sls_prd_key
+  , sls_cust_id
+  , case when sls_order_dt = 0 or length(cast(sls_order_dt as string)) != 8 then null
+        else parse_date('%Y%m%d', cast(sls_order_dt as string))
+    end as sls_order_dt
+  , parse_date('%Y%m%d', cast(sls_ship_dt as string)) as sls_ship_dt
+  , parse_date('%Y%m%d', cast(sls_due_dt as string)) as sls_due_dt
+  , case when sls_sales is null or sls_sales <= 0 
+          or sls_sales != sls_quantity * abs(sls_price) 
+          then abs(sls_price)*sls_quantity
+        else sls_sales
+    end as sls_sales
+  , sls_quantity
+  , case when sls_price is null or sls_price <= 0 
+          then cast(abs(sls_sales)/sls_quantity as int)
+        else sls_price
+    end as sls_price
+  , current_timestamp()
+  from datawarehouse-454113.bronze.crm_sales_details
+);
+
+truncate table datawarehouse-454113.silver.erp_cust_az12;
+insert into datawarehouse-454113.silver.erp_cust_az12
+(
+  select
+  case when cid like 'NAS%' then substring(cid, 4, length(cid))
+        else cid
+    end as cid_2
+  , case when bdate > current_date then null
+        else bdate 
+    end as bdate
+  , case when upper(trim(gen)) in ('F', 'FEMALE') then 'Female'
+        when upper(trim(gen)) in ('M', 'MALE') then 'Male'
+        else 'N/A'
+    end as gen
+  , current_timestamp()
+  from datawarehouse-454113.bronze.erp_cust_az12
+);
+
+truncate table datawarehouse-454113.silver.erp_loc_a101;
+insert into datawarehouse-454113.silver.erp_loc_a101
+(
+  select 
+  replace(cid, '-', '') as cid -- AW00020525
+  , case when trim(cntry) = 'DE' then 'Germany'
+        when trim(cntry) in ('US', 'USA') then 'United States'
+        when trim(cntry) = '' or trim(cntry) is null then 'N/A'
+        else trim(cntry)
+    end as cntry
+  , id
+  , current_timestamp
+  from datawarehouse-454113.bronze.erp_loc_a101
+);
+
+truncate table datawarehouse-454113.silver.erp_px_cat_g1v2;
+insert into datawarehouse-454113.silver.erp_px_cat_g1v2
+(
+  select 
+  id -- AC_BS
+  , cat
+  , subcat
+  , case when maintenance = false then 'No'
+        when maintenance = true then 'Yes'
+    end as maintenace
+  , current_timestamp()
+  from datawarehouse-454113.bronze.erp_px_cat_g1v2
+);
+
+end
+
+
+
+
