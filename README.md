@@ -11,3 +11,5 @@ The goal is to transform fragmented and unstructured datasets into a **clean, sc
 # Data Architecture
 
 The data architecture follows the Medallion Archtecture of having a bronze, silver, and gold layer.
+
+https://github.com/eimon851/sql-data-warehouse-project/blob/main/docs/architecture.png
